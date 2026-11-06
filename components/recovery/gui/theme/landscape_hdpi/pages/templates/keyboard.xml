@@ -1,0 +1,147 @@
+<?xml version="1.0"?>
+<recovery>
+	<templates>
+		<template name="keyboardterminaltemplate">
+			<keyboard>
+				<condition var1="key_numbar" op="!=" var2="1" />
+				<condition var1="tw_hide_kb" var2="0" />
+				<placement x="0" y="%keyboard_terminal_y%" w="2944" h="96" />
+				<background color="%keyboard_bg%" />
+				<key-alphanumeric color="%keyboard_bg%" font="keylabel-bold" textcolor="%text%" />
+				<key-other color="%keyboard_bg%" font="keylabel-bold" textcolor="%text_light%" />
+				<longpress font="keylabel-bold" textcolor="%text_light%" x="12" y="0" />
+				<keylabel key="0:k:29" text="Ctrl" />
+				<keylabel key="0:c:27" text="Esc" />
+				<keylabel key="0:c:9" text="Tab" />
+				<keylabel key="0:k:105" text="" resource="kb_arrow_left" />
+				<keylabel key="0:k:108" text="" resource="kb_arrow_down" />
+				<keylabel key="0:k:103" text="" resource="kb_arrow_up" />
+				<keylabel key="0:k:106" text="" resource="kb_arrow_right" />
+				<highlight color="%keyboard_hl%" />
+				<ctrlhighlight color="%keyboard_hl%" />
+				<layout1>
+					<keysize height="96" width="420" />
+					<row1 key01="423:k:29" key02="422:c:27" long02=":c:3" key03="420:c:9" key04="420:k:105" key05="419:k:108" key06="420:k:103" key07="420:k:106" />
+				</layout1>
+			</keyboard>
+			<keyboard>
+				<condition var1="key_numbar" var2="1" />
+				<condition var1="tw_hide_kb" var2="0" />
+				<placement x="0" y="%keyboard_term_num_y%" w="2944" h="96" />
+				<background color="%keyboard_bg%" />
+				<key-alphanumeric color="%keyboard_bg%" font="keylabel-bold" textcolor="%text%" />
+				<key-other color="%keyboard_bg%" font="keylabel-bold" textcolor="%text_light%" />
+				<longpress font="keylabel-bold" textcolor="%text_light%" x="12" y="0" />
+				<keylabel key="0:k:29" text="Ctrl" />
+				<keylabel key="0:c:27" text="Esc" />
+				<keylabel key="0:c:9" text="Tab" />
+				<keylabel key="0:k:105" text="" resource="kb_arrow_left" />
+				<keylabel key="0:k:108" text="" resource="kb_arrow_down" />
+				<keylabel key="0:k:103" text="" resource="kb_arrow_up" />
+				<keylabel key="0:k:106" text="" resource="kb_arrow_right" />
+				<highlight color="%keyboard_hl%" />
+				<ctrlhighlight color="%keyboard_hl%" />
+				<layout1>
+					<keysize height="96" width="420" />
+					<row1 key01="423:k:29" key02="422:c:27" long02=":c:3" key03="420:c:9" key04="420:k:105" key05="419:k:108" key06="420:k:103" key07="420:k:106" />
+				</layout1>
+			</keyboard>
+		</template>
+		
+		<template name="keyboardtemplate">
+			<keyboard>
+				<condition var1="key_numbar" var2="1" />
+				<condition var1="tw_hide_kb" var2="0" />
+				<placement x="0" y="%keyboard_num_y%" w="2944" h="116" />
+				<background color="%keyboard_bg%" />
+				<key-alphanumeric color="%keyboard_bg%" font="keylabel" textcolor="%text%" />
+				<highlight color="%keyboard_hl%" />
+				<layout1>
+					<keysize height="116" width="294" />
+					<row1 key01="294:1" key02="295:2" key03="294:3" key04="295:4" key05="294:5" key06="294:6" key07="295:7" key08="294:8" key09="295:9" key10="294:0" />
+				</layout1>
+			</keyboard>
+			
+			<keyboard>
+				<condition var1="tw_hide_kb" var2="0" />
+				<placement x="0" y="%keyboard_y%" w="2944" h="768" />
+				<background color="%keyboard_bg%" />
+				<key-alphanumeric color="%keyboard_bg%" font="keylabel" textcolor="%text%" />
+				<key-other color="%keyboard_bg%" font="keylabel-bold" textcolor="%text_light%" />
+				<longpress font="keylabel-longpress" textcolor="%text_light%" x="18" y="12" />
+				<keylabel key="0:c:8" text="" resource="backspace" />
+				<keylabel key=" " text="" resource="space" noalt="1" />
+				<keylabel key="442:action" text="" resource="enter" alt="enter_new" />
+				<highlight color="%keyboard_hl%" />
+				<capshighlight color="%keyboard_hl%" />
+				<layout resource="keyback" />
+				<layout1>
+					<keysize height="192" width="294" />
+					<row1 key01="294:q" long01="1" key02="295:w" long02="2" key03="294:e" long03="3" key04="295:r" long04="4" key05="294:t" long05="5" key06="294:y" long06="6" key07="295:u" long07="7" key08="294:i" long08="8" key09="295:o" long09="9" key10="294:p" long10="0" />
+					<row2 key01="147:" key02="295:a" long02="@" key03="294:s" long03="#" key04="294:d" long04="$" key05="295:f" long05="%" key06="294:g" long06="&amp;" key07="295:h" long07="*" key08="294:j" long08="-" key09="294:k" long09="+" key10="295:l" long10="_" key11="147:" />
+					<row3 key01="442:layout2" key02="294:z" long02="!" key03="294:x" long03="&quot;" key04="295:c" long04="'" key05="294:v" long05=":" key06="295:b" long06=";" key07="294:n" long07="," key08="294:m" long08="?" key09="442:c:8" />
+					<row4 key01="442:layout3" key02="294:/" key03="1472: " key04="294:." key05="442:action" />
+					<keylabel key="0:layout2" text="" resource="shift" />
+					<keylabel key="0:layout3" text="?123" />
+				</layout1>
+				<layout2>
+					<keysize height="192" width="294" capslock="0" revert_layout="1" />
+					<row1 key01="294:Q" long01="1" key02="295:W" long02="2" key03="294:E" long03="3" key04="295:R" long04="4" key05="294:T" long05="5" key06="294:Y" long06="6" key07="295:U" long07="7" key08="294:I" long08="8" key09="295:O" long09="9" key10="294:P" long10="0" />
+					<row2 key01="147:" key02="295:A" long02="@" key03="294:S" long03="#" key04="294:D" long04="$" key05="295:F" long05="%" key06="294:G" long06="&amp;" key07="295:H" long07="*" key08="294:J" long08="-" key09="294:K" long09="+" key10="295:L" long10="_" key11="147:" />
+					<row3 key01="442:layout1" key02="294:Z" long02="!" key03="294:X" long03="&quot;" key04="295:C" long04="'" key05="294:V" long05=":" key06="295:B" long06=";" key07="294:N" long07="," key08="294:M" long08="?" key09="442:c:8" />
+					<row4 key01="442:layout3" key02="294:/" key03="1472: " key04="294:." key05="442:action" />
+					<keylabel key="0:layout1" text="" resource="shift_fill" />
+					<keylabel key="0:layout3" text="?123" />
+				</layout2>
+				<layout3>
+					<keysize height="192" width="294" />
+					<row1 key01="294:1" key02="295:2" key03="294:3" key04="295:4" key05="294:5" key06="294:6" key07="295:7" key08="294:8" key09="295:9" key10="294:0" />
+					<row2 key01="147:" key02="295:@" key03="294:#" key04="294:$" key05="295:%" key06="294:&amp;" key07="295:*" key08="294:-" key09="294:+" key10="295:_" key11="147:" />
+					<row3 key01="442:layout4" key02="294:!" key03="294:c:34" key04="295:'" key05="294::" key06="295:;" key07="294:," key08="294:?" key09="442:c:8" />
+					<row4 key01="442:layout1" key02="294:/" key03="1472: " key04="294:." key05="442:action" />
+					<keylabel key="0:layout1" text="ABC" />
+					<keylabel key="0:layout4" text="~\{" />
+				</layout3>
+				<layout4>
+					<keysize height="192" width="294" />
+					<row1 key01="294:1" key02="295:2" key03="294:3" key04="295:4" key05="294:5" key06="294:6" key07="295:7" key08="294:8" key09="295:9" key10="294:0" />
+					<row2 key01="147:" key02="295:{" key03="294:}" key04="294:[" key05="295:]" key06="294:(" key07="295:)" key08="294:&lt;" key09="294:&gt;" key10="295:|" key11="147:" />
+					<row3 key01="442:layout3" key02="294:%" key03="294:^" key04="295:=" key05="294:\" key06="295:~" key07="294:`" key08="294:?" key09="442:c:8" />
+					<row4 key01="442:layout1" key02="294:/" key03="1472: " key04="294:." key05="442:action" />
+					<keylabel key="0:layout1" text="ABC" />
+					<keylabel key="0:layout3" text="?123" />
+				</layout4>
+			</keyboard>
+
+			<fill color="%keyboard_bg%">
+				<condition var1="tw_hide_kb" var2="0" />
+				<placement x="0" y="%row_nav_y%" w="%screen_w%" h="%nav_h%" />
+			</fill>
+		</template>
+		
+		<template name="keyboardnum">
+			<keyboard>
+				<condition var1="tw_hide_kb" var2="0" />
+				<placement x="0" y="%keyboard_y%" w="2944" h="768" />
+				<background color="%keyboard_bg%" />
+				<key-alphanumeric color="%keyboard_bg%" font="keylabel-num" textcolor="%text%" />
+				<highlight color="%keyboard_hl%" />
+				<keylabel key="0:c:8" text="" resource="backspace" />
+				<keylabel key="0:action" text="" resource="enter" alt="enter_num_new" />
+				<layout resource="keyback_num" />
+				<layout1>
+					<keysize height="192" width="981" />
+					<row1 key01="981:1" key02="982:2" key03="981:3" />
+					<row2 key01="981:4" key02="982:5" key03="981:6" />
+					<row3 key01="981:7" key02="982:8" key03="981:9" />
+					<row4 key01="978:c:8" key02="979:0" key03="987:action" />
+				</layout1>
+			</keyboard>
+
+			<fill color="%keyboard_bg%">
+				<condition var1="tw_hide_kb" var2="0" />
+				<placement x="0" y="%row_nav_y%" w="%screen_w%" h="%nav_h%" />
+			</fill>
+		</template>
+	</templates>
+</recovery>

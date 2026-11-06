@@ -1,0 +1,14 @@
+# The default boot HAL runs in hal_bootctl_default, which stays enforcing in
+# recovery, and recovery has no device label for the misc partition
+# (/dev/block/by-name/misc is plain block_device). So the HAL can't open misc,
+# never registers, and vold's metadata mount waits for it forever (frozen
+# splash). Run it in the permissive recovery domain like the other recovery
+# services. Parsed after android.hardware.boot-service.default_recovery.rc,
+# so "override" replaces that definition.
+service vendor.boot-default /system/bin/hw/android.hardware.boot-service.default_recovery
+    override
+    class early_hal
+    user root
+    group root
+    seclabel u:r:recovery:s0
+    interface aidl android.hardware.boot.IBootControl/default

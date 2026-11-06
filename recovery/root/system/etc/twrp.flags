@@ -1,0 +1,43 @@
+# TWRP partition flags for TB373FU / TB375FC, audited on TB373FU slot A.
+# Mount does not filter absent devices; only define verified partitions.
+#
+#<mnt_point>      <type>  <device>                           <flags>
+/metadata         f2fs    /dev/block/by-name/metadata        flags=display="Metadata";backup=1;wipeingui=0
+/data             f2fs    /dev/block/by-name/userdata        flags=display="Data";fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized;keydirectory=/metadata/vold/metadata_encryption
+
+# Capitalize only the first letter, preserving technical underscores.
+# erofs/ext4 alternatives stay in recovery.fstab; these entries set labels.
+/system           erofs   system                             flags=display="System"
+/system_ext       erofs   system_ext                         flags=display="System_ext"
+/vendor           erofs   vendor                             flags=display="Vendor"
+/product          erofs   product                            flags=display="Product"
+/vendor_dlkm      erofs   vendor_dlkm                        flags=display="Vendor_dlkm"
+/odm_dlkm         erofs   odm_dlkm                           flags=display="Odm_dlkm"
+/system_dlkm      erofs   system_dlkm                        flags=display="System_dlkm"
+
+# Boot chain (A/B)
+/boot             emmc    /dev/block/by-name/boot            flags=display="Boot";slotselect;backup=1;flashimg=1
+/init_boot        emmc    /dev/block/by-name/init_boot       flags=display="Init Boot";slotselect;backup=1;flashimg=1
+/vendor_boot      emmc    /dev/block/by-name/vendor_boot     flags=display="Vendor Boot (recovery)";slotselect;backup=1;flashimg=1
+/dtbo             emmc    /dev/block/by-name/dtbo            flags=display="DTBO";slotselect;backup=1;flashimg=1
+/vbmeta           emmc    /dev/block/by-name/vbmeta          flags=display="VBMeta";slotselect;backup=1;flashimg=1
+/vbmeta_system    emmc    /dev/block/by-name/vbmeta_system   flags=display="VBMeta System";slotselect;backup=1;flashimg=1
+/vbmeta_vendor    emmc    /dev/block/by-name/vbmeta_vendor   flags=display="VBMeta Vendor";slotselect;backup=1;flashimg=1
+/lk               emmc    /dev/block/by-name/lk              flags=display="LK Bootloader";slotselect;backup=1;flashimg=1
+
+# The partition manager adds the whole-super raw backup/image entry itself.
+# Defining /super here would create a second backup/flash target.
+
+# Calibration / identity (back these up before experimenting)
+/nvram            emmc    /dev/block/by-name/nvram           flags=display="NVRAM";backup=1;flashimg=1
+/proinfo          emmc    /dev/block/by-name/proinfo         flags=display="ProInfo";backup=1;flashimg=1
+/nvdata_image     emmc    /dev/block/by-name/nvdata          flags=display="NVData";backup=1;flashimg=1
+/nvcfg_image      emmc    /dev/block/by-name/nvcfg           flags=display="NVCfg";backup=1;flashimg=1
+/protect_f_image  emmc    /dev/block/by-name/protect1        flags=display="Protect F";backup=1;flashimg=1
+/protect_s_image  emmc    /dev/block/by-name/protect2        flags=display="Protect S";backup=1;flashimg=1
+/persist_image    emmc    /dev/block/by-name/persist         flags=display="Persist";backup=1;flashimg=1
+/lenovocust_image emmc    /dev/block/by-name/lenovocust      flags=display="Lenovo Cust";backup=1;flashimg=1
+/lenovoraw_image  emmc    /dev/block/by-name/lenovoraw       flags=display="Lenovo Raw";backup=1;flashimg=1
+/lenovolock_image emmc    /dev/block/by-name/lenovolock      flags=display="Lenovo Lock";backup=1;flashimg=1
+/seccfg           emmc    /dev/block/by-name/seccfg          flags=display="SecCfg";backup=1
+/frp              emmc    /dev/block/by-name/frp             flags=display="FRP";backup=1

@@ -1,0 +1,7 @@
+<!--
+    Base framework manifest for recovery, so libvintf also reads the
+    fragments in manifest/ (keystore2, boot, fastboot). Without it keystore2
+    is undeclared and cannot register with servicemanager.
+-->
+<manifest version="1.0" type="framework">
+</manifest>

@@ -1,0 +1,26 @@
+# Recovery fstab for TB373FU / TB375FC, derived from the LineageOS device tree's
+# fstab.mt6897. TWRP-only display names and image entries live in twrp.flags.
+#
+#<src>                       <mnt_point>     <type>  <mnt_flags and options>   <fs_mgr_flags>
+system                       /system         erofs   ro                        wait,slotselect,logical,first_stage_mount
+system                       /system         ext4    ro                        wait,slotselect,logical,first_stage_mount
+system_ext                   /system_ext     erofs   ro                        wait,slotselect,logical,first_stage_mount
+system_ext                   /system_ext     ext4    ro                        wait,slotselect,logical,first_stage_mount
+vendor                       /vendor         erofs   ro                        wait,slotselect,logical,first_stage_mount
+vendor                       /vendor         ext4    ro                        wait,slotselect,logical,first_stage_mount
+product                      /product        erofs   ro                        wait,slotselect,logical,first_stage_mount
+product                      /product        ext4    ro                        wait,slotselect,logical,first_stage_mount
+vendor_dlkm                  /vendor_dlkm    erofs   ro                        wait,slotselect,logical,first_stage_mount
+vendor_dlkm                  /vendor_dlkm    ext4    ro                        wait,slotselect,logical,first_stage_mount
+odm_dlkm                     /odm_dlkm       erofs   ro                        wait,slotselect,logical,first_stage_mount
+odm_dlkm                     /odm_dlkm       ext4    ro                        wait,slotselect,logical,first_stage_mount
+system_dlkm                  /system_dlkm    erofs   ro                        wait,slotselect,logical,first_stage_mount
+system_dlkm                  /system_dlkm    ext4    ro                        wait,slotselect,logical,first_stage_mount
+
+/dev/block/by-name/metadata  /metadata       f2fs    noatime,nosuid,nodev,discard  wait,check,formattable,first_stage_mount
+/dev/block/by-name/userdata  /data           f2fs    noatime,nosuid,nodev,discard,noflush_merge,fsync_mode=nobarrier,reserve_root=134217,resgid=1065,inlinecrypt  wait,check,formattable,quota,latemount,resize,reservedsize=128m,checkpoint=fs,fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized,keydirectory=/metadata/vold/metadata_encryption,fsverity
+/dev/block/by-name/misc      /misc           emmc    defaults                  defaults
+
+# No microSD slot or verified USB mass-storage block device on this unit.
+# sda/sdb are internal UFS boot LUNs, not USB disks; sda1 does not exist.
+# Do not expose a guessed USB OTG path: Mount does not filter Is_Present.

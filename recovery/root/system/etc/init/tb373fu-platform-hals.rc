@@ -1,0 +1,18 @@
+# Match the recovery Boot HAL domain when the full driver platform is retained.
+# Normal boot does not select this recovery fragment or these overrides.
+service vendor.health-default /system/bin/hw/android.hardware.health-service.example_recovery
+    override
+    class hal
+    user root
+    group root system
+    capabilities WAKE_ALARM BLOCK_SUSPEND
+    seclabel u:r:recovery:s0
+    file /dev/kmsg w
+
+service vendor.fastboot-default /system/bin/hw/android.hardware.fastboot-service.example_recovery
+    override
+    class hal
+    user root
+    group root system
+    seclabel u:r:recovery:s0
+    interface aidl android.hardware.fastboot.IFastboot/default

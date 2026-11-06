@@ -1,0 +1,8 @@
+<!--
+    In recovery this HAL installs to /system, but its fragment is device-type
+    and libvintf refuses to merge it into the framework manifest, which then
+    fails as a whole (keystore2 undeclared). The real declaration is in
+    /vendor/etc/vintf/manifest/android.hardware.fastboot-service.example.xml.
+-->
+<manifest version="1.0" type="framework">
+</manifest>

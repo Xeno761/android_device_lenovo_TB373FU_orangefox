@@ -1,0 +1,77 @@
+# Beanpod (microtrust) TEE in recovery, for /data decryption. Adapted from the
+# stock vendor init scripts (microtrust.rc, android.hardware.security.keymint-
+# service.beanpod.rc, android.hardware.gatekeeper-service.beanpod.rc). The TEE
+# driver (isee-ffa.ko) and RPMB drivers come from vendor_boot's platform
+# ramdisk, which first-stage init loads in recovery too. The blobs live in the
+# ramdisk under /vendor; PBRP's policy keeps the recovery domain permissive.
+
+on fs
+    chmod 0660 /dev/teei_client
+    chown system system /dev/teei_client
+    chmod 0660 /dev/teei_config
+    chown system system /dev/teei_config
+    chmod 0666 /dev/isee_tee0
+    chown system drmrpc /dev/isee_tee0
+    chmod 0660 /dev/tz_vfs
+    chown system system /dev/tz_vfs
+    chown system drmrpc /dev/ut_keymaster
+    chmod 0660 /dev/ut_keymaster
+    # RPMB (UFS)
+    chmod 0660 /dev/0:0:0:49476
+    chown system system /dev/0:0:0:49476
+    chmod 0660 /dev/rpmb0
+    chown system system /dev/rpmb0
+
+    mkdir /mnt/vendor/persist 0771 system system
+
+    start teei_daemon
+    # Both wait for teei_daemon's vendor.soter.teei.init=INIT_OK themselves.
+    start vendor.keymint-beanpod
+    start vendor.gatekeeper-beanpod
+
+# Hold the recovery UI (started by class_start default on boot) until KeyMint
+# is up, so metadata decryption at startup can reach it. Bounded at ~15 s and
+# logged to the kernel log (dmesg | grep tb373fu_wait_tee).
+on early-boot
+    exec u:r:recovery:s0 root root -- /system/bin/sh /system/bin/tb373fu_wait_tee.sh
+
+# Same trusted-app list as stock microtrust.rc.
+service teei_daemon /vendor/bin/teei_daemon \
+    -r 020b0000000000000000000000000000 \
+    -r 020f0000000000000000000000000000 \
+    -r 06090000000000000000000000000000 \
+    -r 05120000000000000000000000000000 \
+    -r 40188311faf343488db888ad39496f9a \
+    -r 07060000000000000000000000007169 \
+    -r 4be4f7dc1f2c11e5b5f7727283247c7f \
+    -r 9073f03a9618383bb1856eb3f990babd \
+    -r 08050000000000000000000000003419 \
+    -r 5020170115e016302017012521300000 \
+    -r 0f5eed3c3b5a47afacca69a84bf0efad \
+    -r 07407000000000000000000000000000 \
+    -r 05160000000000000000000000000000 \
+    -r 91dba524a6e24909acc48abd7163121a \
+    -r 08070000000000000000000000008270 \
+    -r 09080000000000000000000000009381 \
+    -t 08030000000000000000000000000000 \
+    -t 85f630e0f0964c5fa2cc268ce04e3da3 \
+    -t 98fb95bcb4bf42d26473eae48690d7ea \
+    -t 7b66512021214487ba710a51d7ea78fe \
+    -t 09010000000000000000000000000000
+    user root
+    group root system drmrpc
+    capabilities SYS_RAWIO
+    disabled
+    seclabel u:r:recovery:s0
+
+service vendor.keymint-beanpod /vendor/bin/hw/android.hardware.security.keymint@3.0-service.beanpod
+    user root
+    group root system drmrpc
+    disabled
+    seclabel u:r:recovery:s0
+
+service vendor.gatekeeper-beanpod /vendor/bin/hw/android.hardware.gatekeeper-service.beanpod
+    user root
+    group root system
+    disabled
+    seclabel u:r:recovery:s0

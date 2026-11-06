@@ -1,0 +1,3 @@
+<!-- The preserved platform includes this device fragment under /system.
+     Recovery uses the existing Boot HAL declaration under /vendor instead. -->
+<manifest version="1.0" type="framework" />

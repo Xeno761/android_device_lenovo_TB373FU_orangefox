@@ -1,0 +1,2 @@
+<!-- Keep the framework manifest valid; declare this recovery HAL in /vendor. -->
+<manifest version="1.0" type="framework" />

@@ -1,0 +1,8 @@
+<!--
+    Base device manifest for recovery. libvintf only reads the fragments in
+    manifest/ (KeyMint, Gatekeeper, SecureClock, SharedSecret, boot, health)
+    when this file exists; without it servicemanager has no device manifest
+    and refuses to register the beanpod HALs. target-level matches the ROM.
+-->
+<manifest version="1.0" type="device" target-level="8">
+</manifest>

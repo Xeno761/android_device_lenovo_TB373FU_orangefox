@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<recovery>
+	<!-- Built-in fallback only; ui.xml still prefers the saved user theme. -->
+	<include>
+		<xml name="/twres/themes/styles/Dark.xml" />
+	</include>
+</recovery>
