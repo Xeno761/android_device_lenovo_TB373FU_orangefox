@@ -7,7 +7,7 @@
 				<action function="set">aroma_help=0</action>
 			</action>
 			<text style="caption">
-				<placement x="60" y="%row0_a_y%" />
+				<placement x="93" y="%row0_a_y%" />
 				<text>{@listbox_group_main}</text>
 			</text>
 			<listbox style="group_list">
@@ -33,7 +33,7 @@
 				</listitem>
 			</listbox>
 			<text style="caption">
-				<placement x="1508" y="%row0_a_y%" />
+				<placement x="1541" y="%row0_a_y%" />
 				<text>{@listbox_group_additions}</text>
 			</text>
 			<listbox style="group_list">

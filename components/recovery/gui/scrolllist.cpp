@@ -254,6 +254,66 @@ GUIScrollList::GUIScrollList(xml_node<>* node) : GUIObject(node)
 
 GUIScrollList::~GUIScrollList()
 {
+	ClearRowCache();
+}
+
+void GUIScrollList::ClearRowCache()
+{
+	for (auto& shape : mRowShapes) {
+		free(shape.pixels);
+		shape = RowShape{};
+	}
+	mRowShapeBytes = 0;
+	mNextRowShape = 0;
+}
+
+void GUIScrollList::RenderRowShape(int x, int y, int w, int h, int radius, COLOR color, RoundedCornerFlags corners)
+{
+	if (__atomic_exchange_n(&mRowCacheInvalidated, false, __ATOMIC_ACQ_REL))
+		ClearRowCache();
+	// createShape uses an int byte count; reject invalid/overflowing geometry.
+	if (w <= 0 || h <= 0 || w > INT_MAX / 4 / h)
+		return;
+	const size_t bytes = static_cast<size_t>(w) * h * 4;
+	const size_t budget = 8 * 1024 * 1024;
+	const uint32_t rgba = (uint32_t(color.alpha) << 24) | (uint32_t(color.blue) << 16) |
+		(uint32_t(color.green) << 8) | color.red;
+	uint32_t* pixels = nullptr;
+	for (const auto& shape : mRowShapes) {
+		if (shape.pixels && shape.width == w && shape.height == h && shape.radius == radius &&
+		    shape.corners == corners && shape.color == rgba) {
+			pixels = shape.pixels;
+			break;
+		}
+	}
+	const bool cached = bytes <= budget;
+	if (!pixels) {
+		RowShape* slot = nullptr;
+		if (cached) {
+			if (mRowShapeBytes + bytes > budget)
+				ClearRowCache();
+			slot = &mRowShapes[mNextRowShape++ % 4];
+			mRowShapeBytes -= slot->bytes;
+			free(slot->pixels);
+			*slot = RowShape{};
+		}
+		pixels = createShape(w, h, radius, 0, color, corners);
+		if (!pixels)
+			return;
+		if (slot) {
+			*slot = RowShape{w, h, radius, corners, rgba, pixels, bytes};
+			mRowShapeBytes += bytes;
+		}
+	}
+	GGLSurface surface{};
+	surface.version = sizeof(surface);
+	surface.width = surface.stride = w;
+	surface.height = h;
+	surface.data = reinterpret_cast<GGLubyte*>(pixels);
+	surface.format = res_get_pixel_format();
+	gr_blit(reinterpret_cast<gr_surface>(&surface), 0, 0, w, h, x, y);
+	if (!cached)
+		free(pixels);
 }
 
 void GUIScrollList::SetMaxIconSize(int w, int h)
@@ -263,6 +323,7 @@ void GUIScrollList::SetMaxIconSize(int w, int h)
 	if (h > maxIconHeight)
 		maxIconHeight = h;
 	if (maxIconHeight > mFontHeight) {
+		__atomic_store_n(&mRowCacheInvalidated, true, __ATOMIC_RELEASE);
 		actualItemHeight = maxIconHeight + mItemSpacing + mSeparatorH;
 		if (mHeaderH > 0 && actualItemHeight > mHeaderH)
 			mHeaderH = actualItemHeight;
@@ -298,6 +359,8 @@ void GUIScrollList::SetVisibleListLocation(size_t list_index)
 
 int GUIScrollList::Render(void)
 {
+	if (__atomic_exchange_n(&mRowCacheInvalidated, false, __ATOMIC_ACQ_REL))
+		ClearRowCache();
 	if (!isConditionTrue())
 		return 0;
 
@@ -488,7 +551,6 @@ void GUIScrollList::RenderStdItem(int yPos, bool selected, ImageResource* icon, 
 		int y = yPos;
 		int r = 32;
 		RoundedCornerFlags corners = RoundedCornerFlags::NONE;
-		int s = 0;
 
 		// [Yacha] Apply padding correctly to the group background
 		if (groupStatus == 1 || groupStatus == 4) { // First or single item
@@ -521,25 +583,9 @@ void GUIScrollList::RenderStdItem(int yPos, bool selected, ImageResource* icon, 
 				gr_fill(x, y, w, h);
 			}
 		} else {
-			GGLSurface *surface = (GGLSurface *)malloc(sizeof(GGLSurface));
-			memset(surface, 0, sizeof(GGLSurface));
-			surface->version = sizeof(surface);
-			uint32_t* img = createShape(w, h, r, s, groupColor, corners);
-			uint32_t* hl_img = nullptr;
-			surface->width = w;
-			surface->height = h;
-			surface->stride = w;
-			surface->data = (GGLubyte*)img;
-			surface->format = res_get_pixel_format();
-			gr_blit((gr_surface)surface, 0, 0, w, h, x, y);
-			if (isHighlight) {
-				hl_img = createShape(w, h, r, s, highlightColor, corners);
-				surface->data = (GGLubyte*)hl_img;
-				gr_blit((gr_surface)surface, 0, 0, w, h, x, y);
-			}
-			res_free_surface(surface);
-			free(img);
-			free(hl_img);
+			RenderRowShape(x, y, w, h, r, groupColor, corners);
+			if (isHighlight)
+				RenderRowShape(x, y, w, h, r, highlightColor, corners);
 		}
 
 		// render group arrow
@@ -846,6 +892,9 @@ int GUIScrollList::GetDisplayRemainder()
 
 int GUIScrollList::NotifyVarChange(const std::string& varName, const std::string& value)
 {
+	if (varName.empty() || varName.compare(0, 6, "theme_") == 0)
+		// Notifications can come from action threads; never free an in-flight blit.
+		__atomic_store_n(&mRowCacheInvalidated, true, __ATOMIC_RELEASE);
 	GUIObject::NotifyVarChange(varName, value);
 
 	if (!isConditionTrue())
@@ -866,6 +915,8 @@ int GUIScrollList::NotifyVarChange(const std::string& varName, const std::string
 
 int GUIScrollList::SetRenderPos(int x, int y, int w /* = 0 */, int h /* = 0 */)
 {
+	if ((w || h) && (w != mRenderW || h != mRenderH))
+		__atomic_store_n(&mRowCacheInvalidated, true, __ATOMIC_RELEASE);
 	mRenderX = x;
 	mRenderY = y;
 	if (w || h)
@@ -880,6 +931,7 @@ int GUIScrollList::SetRenderPos(int x, int y, int w /* = 0 */, int h /* = 0 */)
 
 void GUIScrollList::SetPageFocus(int inFocus)
 {
+	__atomic_store_n(&mRowCacheInvalidated, true, __ATOMIC_RELEASE);
 	if (inFocus) {
 		NotifyVarChange("", ""); // This forces a check for the header text
 		scrollingSpeed = touchSpeed = scrollRemainder = 0; // stop scrolling on page changes

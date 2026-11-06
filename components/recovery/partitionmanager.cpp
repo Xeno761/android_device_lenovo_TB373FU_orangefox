@@ -463,11 +463,17 @@ parse:
 			fstab_line[line_size] = '\n';
 
 		TWPartition* partition = new TWPartition();
-		// Keep Metadata's backup/wipe-UI policy when the ROM fstab replaces it.
-		// Data still uses the ROM's encryption flags without device overrides.
-		auto flag_overrides = parse_userdata && !TWFunc::HasDelimitedWord(fstab_line, "/metadata")
-			? nullptr : &twrp_flags;
-		if (partition->Process_Fstab_Line(fstab_line, Display_Error, flag_overrides)) {
+		if (partition->Process_Fstab_Line(fstab_line, Display_Error, parse_userdata ? nullptr : &twrp_flags)) {
+			// Retain Metadata policy without replacing the installed ROM's
+			// filesystem/device, which can differ between compatible firmware.
+			if (parse_userdata && partition->Mount_Point == "/metadata") {
+				auto policy = twrp_flags.find("/metadata");
+				if (policy != twrp_flags.end()) {
+					std::string flags = policy->second.Flags;
+					if (flags.compare(0, 6, "flags=") == 0) flags.erase(0, 6);
+					partition->Process_TW_Flags(flags.data(), Display_Error, 1);
+				}
+			}
 			if (partition->Mount_Point == "/data") data = partition;
 			if (partition->Mount_Point == "/metadata") meta = partition;
 			if (partition->Is_Super && !Prepare_Super_Volume(partition)) {
@@ -682,6 +688,14 @@ int TWPartitionManager::Write_Fstab(void) {
 
 void TWPartitionManager::Decrypt_Data() {
 	#ifdef TW_INCLUDE_CRYPTO
+	if (android::base::GetProperty("ro.recovery.crypto_profile", "") == "adaptive" &&
+		android::base::GetProperty("vendor.recovery.crypto.profile", "") != "ready") {
+		DataManager::SetValue(FOX_ENCRYPTED_DEVICE, 1);
+		DataManager::SetValue(TW_IS_ENCRYPTED, 1);
+		DataManager::SetValue(TW_IS_DECRYPTED, 0);
+		LOGERR("ROM crypto profile is not verified; leaving data encrypted without upgrading keys.\n");
+		return;
+	}
 	TWPartition* Decrypt_Data = Find_Partition_By_Path("/data");
 	if (Decrypt_Data && Decrypt_Data->Is_Encrypted && !Decrypt_Data->Is_Decrypted) {
 		Set_Crypto_State();
@@ -2340,6 +2354,14 @@ void TWPartitionManager::Check_Users_Decryption_Status() {
 
 int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
 #ifdef TW_INCLUDE_CRYPTO
+  if (android::base::GetProperty("ro.recovery.crypto_profile", "") == "adaptive" &&
+      android::base::GetProperty("vendor.recovery.crypto.profile", "") != "ready") {
+    DataManager::SetValue(FOX_ENCRYPTED_DEVICE, 1);
+    DataManager::SetValue(TW_IS_ENCRYPTED, 1);
+    DataManager::SetValue(TW_IS_DECRYPTED, 0);
+    gui_err("ROM crypto profile is not verified. Data was left unchanged.");
+    return -1;
+  }
   char crypto_blkdev[PROPERTY_VALUE_MAX];
   std::vector < TWPartition * >::iterator iter;
 

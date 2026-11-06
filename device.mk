@@ -4,6 +4,10 @@
 
 PRODUCT_SOONG_NAMESPACES += device/lenovo/TB373FU
 
+# Resolve the active ROM before initializing the hardware crypto services.
+PRODUCT_PACKAGES += tb373fu_crypto_profile
+PRODUCT_SYSTEM_DEFAULT_PROPERTIES += ro.recovery.crypto_profile=adaptive
+
 # API levels (stock launched on Android 14)
 PRODUCT_SHIPPING_API_LEVEL := 34
 BOARD_SHIPPING_API_LEVEL := 34

@@ -46,6 +46,7 @@
 #define OF_UI_MAX_H_STRETCH_PCT 100
 #endif
 #include <cutils/properties.h>
+#include <android-base/properties.h>
 
 #include <string>
 #include <algorithm>
@@ -563,16 +564,39 @@ bool Page::ProcessNode(xml_node<>* page, std::vector<xml_node<>*> *templates, in
 
 int Page::Render(void)
 {
+	static const bool profile_objects = android::base::GetBoolProperty("debug.twrp.profile.objects", false);
+	static unsigned profile_frame = 0;
+	const bool sample = profile_objects && (++profile_frame % 30 == 0);
+	timespec begin{}, end{};
+	if (sample) clock_gettime(CLOCK_MONOTONIC, &begin);
 	// Render background
 	gr_color(mBackground.red, mBackground.green, mBackground.blue, mBackground.alpha);
 	gr_fill(0, 0, gr_fb_width(), gr_fb_height());
+	if (sample) {
+		clock_gettime(CLOCK_MONOTONIC, &end);
+		const double ms = (end.tv_sec - begin.tv_sec) * 1000.0 + (end.tv_nsec - begin.tv_nsec) / 1000000.0;
+		LOGINFO("UI raster page=%s background=%.2fms\n", mName.c_str(), ms);
+	}
 
 	// Render remaining objects
 	std::vector<RenderObject*>::iterator iter;
+	unsigned object = 0;
 	for (iter = mRenders.begin(); iter != mRenders.end(); iter++)
 	{
+		if (sample) clock_gettime(CLOCK_MONOTONIC, &begin);
 		if ((*iter)->Render())
 			LOGERR("A render request has failed.\n");
+		if (sample) {
+			clock_gettime(CLOCK_MONOTONIC, &end);
+			const double ms = (end.tv_sec - begin.tv_sec) * 1000.0 + (end.tv_nsec - begin.tv_nsec) / 1000000.0;
+			if (ms >= 1.0) {
+				int x, y, width, height;
+				(*iter)->GetRenderPos(x, y, width, height);
+				LOGINFO("UI raster page=%s object=%u rect=%d,%d,%d,%d cost=%.2fms\n",
+					mName.c_str(), object, x, y, width, height, ms);
+			}
+		}
+		++object;
 	}
 	return 0;
 }

@@ -126,6 +126,8 @@ def main():
     parser.add_argument("--expect-theme-width", type=int)
     parser.add_argument("--expect-adb-fallback", action="store_true")
     parser.add_argument("--expect-mtp", action="store_true")
+    parser.add_argument("--expect-adaptive-crypto", action="store_true")
+    parser.add_argument("--expect-crypto-detector", help="compiled ROM detector that must be baked byte-for-byte")
     parser.add_argument("--expect-built-in-ui", help="generated resource directory whose contents must be baked into twres")
     parser.add_argument("--expect-minui", help="compiled display/input library that must be baked into recovery")
     args = parser.parse_args()
@@ -138,7 +140,7 @@ def main():
         if line and not line.startswith("#") and "=" in line:
             name, value = line.split("=", 1)
             if name in ("ro.build.version.release", "ro.build.version.security_patch",
-                        "ro.vendor.build.security_patch"):
+                        "ro.vendor.build.security_patch", "ro.recovery.crypto_profile"):
                 check(name not in properties, "duplicate crypto property: " + name)
                 properties[name] = value
     for name, expected in (("ro.build.version.release", args.expect_release),
@@ -153,6 +155,33 @@ def main():
         check(files["system/lib64/libminuitwrp.so"][1] == Path(args.expect_minui).read_bytes(),
               "stale display/input backend in recovery ramdisk")
         print("PASS: compiled display/input backend is baked byte-for-byte")
+    if args.expect_adaptive_crypto:
+        check(properties.get("ro.recovery.crypto_profile") == "adaptive", "adaptive crypto gate is missing")
+        detector = files["system/bin/tb373fu_crypto_profile"]
+        check(detector[0] & stat.S_IXUSR and detector[1].startswith(b"\x7fELF"), "ROM detector is not executable ELF")
+        check(b"normal_metadata_mount_failed:" in detector[1] and
+              b"metadata_requires_manual_filesystem_check" in detector[1],
+              "detector lacks the guarded normal Metadata mount required before profile inspection")
+        microtrust = files["init.recovery.microtrust.rc"][1].decode()
+        wait_tee = files["system/bin/tb373fu_wait_tee.sh"][1].decode()
+        recovery_init = files["init.recovery.mt8792.rc"][1].decode()
+        foxstart = files["sbin/foxstart.sh"][1].decode()
+        check("tb373fu_crypto_profile --prepare" in microtrust, "profile preparation is not in early init")
+        for service in ("teei_daemon", "vendor.keymint-beanpod", "vendor.gatekeeper-beanpod"):
+            check(not any(line.strip() == "start " + service for line in microtrust.splitlines()),
+                  "crypto service starts before profile preparation: " + service)
+        check("tb373fu_crypto_profile --verify" in wait_tee and "configured" in wait_tee,
+              "original metadata verification gate is absent")
+        check("setprop crypto.ready 0" in recovery_init and "setprop crypto.ready 1" not in recovery_init,
+              "crypto readiness is asserted before verification")
+        check("ro.recovery.crypto_profile" in foxstart and '!= "adaptive"' in foxstart,
+              "late startup can overwrite adaptive crypto bindings")
+        check(b"ROM crypto profile is not verified" in files["system/bin/recovery"][1],
+              "recovery binary lacks the blocked-profile decryption guard")
+        print("PASS: adaptive discovery and no-upgrade verification gates baked; ROM matrix remains hardware-dependent")
+    if args.expect_crypto_detector:
+        check(files["system/bin/tb373fu_crypto_profile"][1] == Path(args.expect_crypto_detector).read_bytes(),
+              "stale ROM-profile detector in ramdisk")
     if args.expect_adb_fallback:
         recovery_init = files["init.recovery.mt8792.rc"][1].decode()
         check("\non property:sys.usb.config=mtp,adb && property:sys.usb.configfs=1\n"

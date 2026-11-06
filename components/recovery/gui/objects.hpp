@@ -703,6 +703,20 @@ protected:
 	COLOR groupColor;
 	ImageResource* groupArrow;
 	bool isGroup;
+
+	struct RowShape {
+		int width = 0, height = 0, radius = 0;
+		RoundedCornerFlags corners = RoundedCornerFlags::NONE;
+		uint32_t color = 0;
+		uint32_t* pixels = nullptr;
+		size_t bytes = 0;
+	};
+	RowShape mRowShapes[4]{};
+	size_t mRowShapeBytes = 0;
+	unsigned mNextRowShape = 0;
+	bool mRowCacheInvalidated = false; // accessed atomically; pixels are owned by the render thread
+	void ClearRowCache();
+	void RenderRowShape(int x, int y, int w, int h, int radius, COLOR color, RoundedCornerFlags corners);
 };
 
 class GUIFileSelector : public GUIScrollList

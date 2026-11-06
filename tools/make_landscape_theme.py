@@ -261,7 +261,7 @@ def reflow_pages(trees):
         place(box, x=MARGIN if index == 0 else RIGHT_X, y="%row1_1a_y%", w=COLUMN_W, h="%ls_nav_column_h%")
     captions = [node for node in advanced.findall("text") if node.get("style") == "caption"]
     for index, caption in enumerate(captions):
-        place(caption, x=MARGIN + 12 if index == 0 else RIGHT_X + 12, y="%row0_a_y%")
+        place(caption, x=MARGIN + 45 if index == 0 else RIGHT_X + 45, y="%row0_a_y%")
 
     # The extended OF file selector handles folder holds and batch selection.
     # Keep it intact; use the tablet's remaining column for the existing tools.
@@ -280,6 +280,36 @@ def reflow_pages(trees):
               y="%search_files_y%" if index == 0 else "%row4_1_y%",
               h="%lb_group_l3%" if index == 0 else "%bl_h4%")
         browser.append(sidebar)
+
+    # The sidebar replaces only this header menu, not other menu/back routes.
+    menu_buttons = [node for node in browser.findall("button[@style='actionbar']")
+                    if node.findtext("action[@function='page']") == "menu"
+                    and node.find("placement[@y='%ab_search_y%']") is not None]
+    menu_icons = [node for node in browser.findall("image")
+                  if node.find("image[@resource='actionbar_menu']") is not None
+                  and node.find("placement[@y='%ab_search_y%']") is not None]
+    if len(menu_buttons) != 1 or len(menu_icons) != 1:
+        raise ValueError("Files header menu structure changed")
+    menu_button, menu_icon = menu_buttons[0], menu_icons[0]
+    if (menu_button.find("placement").attrib != menu_icon.find("placement").attrib
+            or [(action.attrib, action.text) for node in (menu_button, menu_icon)
+                for action in node.iter("action")] != [({"function": "page"}, "menu")]
+            or any(node.find(".//condition") is not None for node in (menu_button, menu_icon))):
+        raise ValueError("Files header menu route changed")
+    browser.remove(menu_button)
+    browser.remove(menu_icon)
+
+    sort_buttons = [node for node in browser.findall("button[@style='actionbar']")
+                    if node.findtext("action[@function='overlay']") == "fm_sort"
+                    and node.find("placement[@y='%ab_search_y%']") is not None]
+    sort_icons = [node for node in browser.findall("image")
+                  if node.find("image[@resource='actionbar_sort']") is not None
+                  and node.find("placement[@y='%ab_search_y%']") is not None]
+    if (len(sort_buttons) != 1 or len(sort_icons) != 1
+            or sort_buttons[0].find("placement").attrib != sort_icons[0].find("placement").attrib):
+        raise ValueError("Files sort control structure changed")
+    for node in sort_buttons + sort_icons:
+        place(node, x="%ab_btn1_x%")
 
     # Static option menus can form two columns without changing any item action.
     for name in ("settings", "ext_custom", "fox_other_additions", "filemanageroptions"):

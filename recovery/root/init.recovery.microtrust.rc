@@ -24,14 +24,12 @@ on fs
 
     mkdir /mnt/vendor/persist 0771 system system
 
-    start teei_daemon
-    # Both wait for teei_daemon's vendor.soter.teei.init=INIT_OK themselves.
-    start vendor.keymint-beanpod
-    start vendor.gatekeeper-beanpod
+    # The helper starts only these bundled services after readonly ROM/profile
+    # validation, temporary-map cleanup and a complete property update.
+    exec u:r:recovery:s0 root root -- /system/bin/tb373fu_crypto_profile --prepare
 
-# Hold the recovery UI (started by class_start default on boot) until KeyMint
-# is up, so metadata decryption at startup can reach it. Bounded at ~15 s and
-# logged to the kernel log (dmesg | grep tb373fu_wait_tee).
+# Keep UI decryption gated until the original metadata record has passed a
+# bounded direct KeyMint check that never calls upgradeKey.
 on early-boot
     exec u:r:recovery:s0 root root -- /system/bin/sh /system/bin/tb373fu_wait_tee.sh
 

@@ -57,8 +57,7 @@ extern "C"
 #include "blanktimer.hpp"
 #include "tw_atomic.hpp"
 
-// Enable to print render time of each frame to the log file
-//#define PRINT_RENDER_TIME 1
+// debug.twrp.profile enables aggregate timing without per-frame log traffic.
 
 #ifdef _EVENT_LOGGING
 #define LOGEVENT(...) LOGERR(__VA_ARGS__)
@@ -88,7 +87,44 @@ int select_fd = 0;
 static int gRecorder = -1;
 
 static long long g_suppress_power_toggle_until_ms = 0;
-static inline long long nowMs() { struct timeval t; gettimeofday(&t, NULL); return (long long)t.tv_sec * 1000LL + t.tv_usec / 1000; }
+static int64_t guiNowNs() {
+	timespec now{};
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return static_cast<int64_t>(now.tv_sec) * 1000000000LL + now.tv_nsec;
+}
+static inline long long nowMs() { return guiNowNs() / 1000000; }
+static uint64_t gInputEvents = 0;
+
+struct GuiFrameProfile {
+	unsigned frames = 0, presented = 0, unknown = 0, forced = 0, failed = 0, skipped = 0;
+	int64_t first = 0, input = 0, update = 0, render = 0, flip = 0, blank = 0, maximum = 0;
+	void add(int64_t start, int64_t after_input, int64_t after_update, int64_t after_render,
+	         int64_t after_flip, int64_t end, bool was_forced, int status) {
+		if (!frames)
+			first = start;
+		++frames;
+		presented += status == 1;
+		unknown += status == -2;
+		failed += status == -1;
+		skipped += status == 0;
+		forced += was_forced;
+		input += after_input - start;
+		update += after_update - after_input;
+		render += after_render - after_update;
+		flip += after_flip - after_render;
+		blank += end - after_flip;
+		maximum = std::max(maximum, end - start);
+		if (frames == 30) {
+			const double wall = (end - first) / 1000000000.0;
+			LOGINFO("UI frames=30 presented=%u unknown=%u failed=%u blank_skips=%u forced=%u wall=%.3fs submit_fps=%.2f present_fps=%.2f input_service=%.2fms update=%.2fms render=%.2fms flip=%.2fms blank=%.2fms max=%.2fms\n",
+				presented, unknown, failed, skipped, forced, wall,
+				wall > 0 ? frames / wall : 0, wall > 0 && !unknown ? presented / wall : -1,
+				input / 30000000.0, update / 30000000.0, render / 30000000.0,
+				flip / 30000000.0, blank / 30000000.0, maximum / 1000000.0);
+			*this = GuiFrameProfile{};
+		}
+	}
+};
 
 extern "C" void gr_write_frame_to_file(int fd);
 
@@ -124,6 +160,7 @@ public:
 		key_repeat_ms = 100;
 		touch_status = TS_NONE;
 		key_status = KS_NONE;
+		consume_power_release = false;
 		state = AS_NO_ACTION;
 		x = y = 0;
 
@@ -173,6 +210,7 @@ private:
 	action_state_enum state;
 	int x, y; // x and y coordinates of last touch
 	int drag_x = 0, drag_y = 0;
+	bool consume_power_release = false;
 	struct timeval touchStart; // used to track time for long press / key repeat
 
 	void processHoldAndRepeat();
@@ -190,6 +228,8 @@ bool InputHandler::processInput(int timeout_ms)
 {
 	input_event ev{};
 	int ret = ev_get(&ev, timeout_ms);
+	if (ret != -2)
+		++gInputEvents;
 
 	if (ret < 0)
 	{
@@ -455,6 +495,34 @@ void InputHandler::process_EV_KEY(input_event& ev)
 {
 	HardwareKeyboard *kb = PageManager::GetHardwareKeyboard();
 
+	if (ev.code == KEY_POWER) {
+		// A wake press belongs to the off screen, including its eventual release.
+		// Do not feed it to awake shortcuts or the 200 ms key-repeat timer.
+		if (consume_power_release) {
+			if (ev.value == 0) {
+				consume_power_release = false;
+				kb->ConsumeKeyRelease(KEY_POWER);
+				key_status = KS_NONE;
+				touch_status = TS_NONE;
+				mime = 0;
+			}
+			return;
+		}
+		if (ev.value == 1 && blankTimer.isScreenOff()) {
+			consume_power_release = true;
+			kb->ConsumeKeyRelease(KEY_POWER);
+			key_status = KS_NONE;
+			touch_status = TS_NONE;
+			mime = 0;
+			blankTimer.resetTimerAndUnblank();
+			return;
+		}
+		if (ev.value == 2 && !kb->IsKeyDown(KEY_POWER))
+			return;
+		if (ev.value == 0 && !kb->IsKeyDown(KEY_POWER))
+			return;
+	}
+
 	// Handle key-press here
 	LOGEVENT("TOUCH_KEY: %d\n", ev.code);
 	// Left mouse button is treated as a touch
@@ -537,6 +605,8 @@ void InputHandler::process_EV_KEY(input_event& ev)
 		}
 		if (mime <= 500)
 			kb->KeyUp(ev.code);
+		else
+			kb->ConsumeKeyRelease(ev.code);
 		key_status = KS_NONE;
 		touch_status = TS_NONE;
 #ifdef TW_USE_KEY_CODE_TOUCH_SYNC
@@ -771,11 +841,23 @@ static int runPages(const char *page_name, const int stop_on_page_done)
 	int input_timeout_ms = 0;
 	int idle_frames = 0;
 	const bool profile_frames = android::base::GetBoolProperty("debug.twrp.profile", false);
-	int profiled_frames = 0;
-	int64_t update_ns = 0, render_ns = 0, flip_ns = 0, max_frame_ns = 0;
+	GuiFrameProfile profile;
+	// One bounded, render-only run per process. No navigation or synthesized input.
+	static bool benchmark_used = false;
+	int benchmark_frames = profile_frames && getuid() == 0 && !benchmark_used ?
+		std::max(0, std::min(120, android::base::GetIntProperty("debug.twrp.benchmark_frames", 0))) : 0;
+	const std::string benchmark_page = android::base::GetProperty("debug.twrp.benchmark_page", "main");
+	if (benchmark_page != "main" && benchmark_page != "filemanagerlist" && benchmark_page != "settings")
+		benchmark_frames = 0;
+	benchmark_used |= benchmark_frames > 0;
+	const int64_t benchmark_deadline = benchmark_frames ? guiNowNs() + 10000000000LL : 0;
+	const uint64_t benchmark_input = gInputEvents;
+	int64_t benchmark_start = 0;
+	unsigned benchmark_done = 0, benchmark_presented = 0;
 
 	for (;;)
 	{
+		const int64_t frame_start = profile_frames ? guiNowNs() : 0;
 		loopTimer(input_timeout_ms);
 		FD_ZERO(&fdset);
 		timeout.tv_sec = 0;
@@ -802,12 +884,27 @@ static int runPages(const char *page_name, const int stop_on_page_done)
 				ors_command_read();
 		}
 
-		if (!gForceRender.get_value())
-		{
-			timespec start{}, after_update{}, after_render{}, after_flip{};
-			if (profile_frames) clock_gettime(CLOCK_MONOTONIC, &start);
-			int ret = PageManager::Update();
-			if (profile_frames) clock_gettime(CLOCK_MONOTONIC, &after_update);
+		bool benchmark_frame = false;
+		if (benchmark_frames) {
+			const std::string current_page = PageManager::GetCurrentPage();
+			if (guiNowNs() >= benchmark_deadline || gInputEvents != benchmark_input ||
+			    blankTimer.isScreenOff() || DataManager::GetIntValue("tw_busy") ||
+			    (benchmark_start && current_page != benchmark_page)) {
+				LOGINFO("UI benchmark stopped frames=%u (input/page/busy/blank/deadline)\n", benchmark_done);
+				benchmark_frames = 0;
+			} else if (current_page == benchmark_page) {
+				benchmark_frame = true;
+				if (!benchmark_start) {
+					benchmark_start = frame_start;
+					LOGINFO("UI benchmark begin page=%s frames=%d deadline=10s (between frames)\n", benchmark_page.c_str(), benchmark_frames);
+				}
+			}
+		}
+		const int64_t after_input = profile_frames ? guiNowNs() : 0;
+		const bool forced = gForceRender.get_value() != 0;
+		int ret;
+		if (!forced) {
+			ret = PageManager::Update();
 			if (ret == 0)
 				++idle_frames;
 			else if (ret == -2)
@@ -816,60 +913,42 @@ static int runPages(const char *page_name, const int stop_on_page_done)
 				idle_frames = 0;
 			// due to possible animation objects, we need to delay activating the input timeout
 			input_timeout_ms = input_handler.isActive() ? 1 : (idle_frames > 15 ? 1000 : 0);
-
-#ifndef PRINT_RENDER_TIME
-			if (ret > 1)
-				PageManager::Render();
-			if (profile_frames) clock_gettime(CLOCK_MONOTONIC, &after_render);
-
-			if (ret > 0)
-				flip();
-			if (profile_frames && ret > 0) {
-				clock_gettime(CLOCK_MONOTONIC, &after_flip);
-				auto elapsed_ns = [](const timespec& from, const timespec& to) -> int64_t {
-					return (to.tv_sec - from.tv_sec) * 1000000000LL + to.tv_nsec - from.tv_nsec;
-				};
-				update_ns += elapsed_ns(start, after_update);
-				render_ns += elapsed_ns(after_update, after_render);
-				flip_ns += elapsed_ns(after_render, after_flip);
-				max_frame_ns = std::max(max_frame_ns, elapsed_ns(start, after_flip));
-				if (++profiled_frames == 30) {
-					LOGINFO("UI frames=30: update=%.2fms render=%.2fms flip=%.2fms max=%.2fms\n",
-						update_ns / 30000000.0, render_ns / 30000000.0,
-						flip_ns / 30000000.0, max_frame_ns / 1000000.0);
-					profiled_frames = 0;
-					update_ns = render_ns = flip_ns = max_frame_ns = 0;
-				}
-			}
-#else
-			if (ret > 1)
-			{
-				timespec start, end;
-				int32_t render_t, flip_t;
-				clock_gettime(CLOCK_MONOTONIC, &start);
-				PageManager::Render();
-				clock_gettime(CLOCK_MONOTONIC, &end);
-				render_t = TWFunc::timespec_diff_ms(start, end);
-
-				flip();
-				clock_gettime(CLOCK_MONOTONIC, &start);
-				flip_t = TWFunc::timespec_diff_ms(end, start);
-
-				LOGINFO("Render(): %u ms, flip(): %u ms, total: %u ms\n", render_t, flip_t, render_t+flip_t);
-			}
-			else if (ret > 0)
-				flip();
-#endif
-		}
-		else
-		{
+		} else {
 			gForceRender.set_value(0);
-			PageManager::Render();
-			flip();
+			ret = 2;
 			input_timeout_ms = 0;
 		}
+		if (benchmark_frame && (PageManager::GetCurrentPage() != benchmark_page ||
+		    blankTimer.isScreenOff() || DataManager::GetIntValue("tw_busy"))) {
+			benchmark_frame = false;
+			benchmark_frames = 0;
+			LOGINFO("UI benchmark stopped after page update\n");
+		}
+		if (benchmark_frame && ret >= 0) {
+			ret = 2;
+			input_timeout_ms = 0;
+		}
+		const int64_t after_update = profile_frames ? guiNowNs() : 0;
+		if (ret > 1)
+			PageManager::Render();
+		const int64_t after_render = profile_frames ? guiNowNs() : 0;
+		if (ret > 0)
+			flip();
+		const int64_t after_flip = profile_frames ? guiNowNs() : 0;
+		const int flip_status = ret > 0 && gr_drm_last_flip_status ? gr_drm_last_flip_status() : -2;
 
 		blankTimer.checkForTimeout();
+		if (profile_frames && ret > 0)
+			profile.add(frame_start, after_input, after_update, after_render, after_flip, guiNowNs(), forced || benchmark_frame, flip_status);
+		if (benchmark_frame && ret > 0) {
+			++benchmark_done;
+			benchmark_presented += flip_status == 1;
+			if (--benchmark_frames == 0) {
+				const double wall = (guiNowNs() - benchmark_start) / 1000000000.0;
+				LOGINFO("UI benchmark end frames=%u presented=%u wall=%.3fs present_fps=%.2f (static redraw, not scrolling)\n",
+					benchmark_done, benchmark_presented, wall, wall > 0 ? benchmark_presented / wall : 0);
+			}
+		}
 		if (stop_on_page_done && DataManager::GetIntValue("tw_page_done") != 0)
 		{
 			gui_changePage("main");

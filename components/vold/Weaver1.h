@@ -24,9 +24,12 @@
 #ifndef TWRP_WEAVER_H
 #define TWRP_WEAVER_H
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <android/hardware/weaver/1.0/IWeaver.h>
 #include <aidl/android/hardware/weaver/IWeaver.h>
@@ -46,8 +49,16 @@ class Weaver {
 		bool GetSlots(uint32_t* slots);
 		bool GetKeySize(uint32_t* keySize);
 		bool GetValueSize(uint32_t* valueSize);
-		// TODO: we should return more information about the status including time delays before the next retry
-		bool WeaverVerify(const uint32_t slot, const void* weaver_key, std::vector<uint8_t>* payload);
+		enum class VerifyStatus {
+			OK, FAILED, INCORRECT_KEY, THROTTLE, TRANSPORT_ERROR, UNAVAILABLE, INVALID_RESPONSE
+		};
+		struct VerifyResult {
+			VerifyStatus status;
+			// THROTTLE with zero means no usable delay was supplied; reads stay blocked.
+			uint32_t timeout_ms;
+		};
+		VerifyResult WeaverVerify(uint32_t slot, const void* weaver_key, size_t key_buffer_size,
+				std::vector<uint8_t>* payload);
 
 	private:
 		sp<hardware::weaver::V1_0::IWeaver> mDevice;
@@ -57,7 +68,7 @@ class Weaver {
 		::aidl::android::hardware::weaver::WeaverConfig aidlConfig;
 		bool GottenConfig;
 
-		bool GetConfig();
+		VerifyStatus GetConfig();
 
 		DISALLOW_COPY_AND_ASSIGN(Weaver);
 };

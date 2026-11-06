@@ -1,0 +1,19 @@
+cc_binary {
+    name: "tb373fu_crypto_profile",
+    srcs: ["main.cpp", "profile.cpp", "storage_checks.cpp"],
+    cpp_std: "c++17",
+    cflags: ["-Wall", "-Wextra", "-Werror"],
+    shared_libs: [
+        "libbase",
+        "libbinder_ndk",
+        "libcrypto",
+        "libcutils",
+        "libext4_utils",
+        "liblog",
+    ],
+    static_libs: [
+        "libfs_mgr", "liblp", "libdm", "libfstab",
+        "android.hardware.security.keymint-V3-ndk",
+        "android.hardware.security.secureclock-V1-ndk",
+    ],
+}

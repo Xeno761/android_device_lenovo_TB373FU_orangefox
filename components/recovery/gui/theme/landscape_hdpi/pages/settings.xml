@@ -620,11 +620,12 @@
 			</text>
 			<text style="caption">
 				<placement x="%gl_text_x%" y="%row1_1_y%" />
-				<text>{@sel_tz_list}</text>
+				<text>{@sel_tz_list}: %tw_time_zone_effective% (%tw_time_zone_source%)</text>
 			</text>
 			<listbox style="radiobox_group">
 				<placement x="0" y="%row1_2_y%" w="%screen_w%" h="%lb_group_l7%" />
 				<data name="tw_time_zone_guisel" />
+				<listitem name="{@android_timezone=Automatic (Android timezone)}">auto</listitem>
 				<listitem name="{@utcm11}">BST11;BDT</listitem>
 				<listitem name="{@utcm10}">HST10;HDT</listitem>
 				<listitem name="{@utcm9}">AST9;ADT</listitem>

@@ -18,6 +18,7 @@
  */
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -64,8 +65,57 @@ GRSurface* gr_draw = NULL;
 static GGLContext *gr_context = 0;
 GGLSurface gr_mem_surface;
 static int gr_is_curr_clr_opaque = 0;
+static bool gr_is_curr_clr_transparent = false;
 
 unsigned int gr_rotation = 0;
+
+static bool gr_alpha_canvas() {
+    return gr_draw && gr_draw->data && gr_draw->pixel_bytes == 4 &&
+        (gr_draw->format == GGL_PIXEL_FORMAT_RGBA_8888 ||
+         gr_draw->format == GGL_PIXEL_FORMAT_BGRA_8888);
+}
+
+enum class BlitAlpha { Mixed, Transparent, Opaque };
+
+static bool gr_blit_alpha_safe(const GGLSurface* surface, int sx, int sy, int w, int h) {
+    if (!surface || !surface->data || gr_rotation != 0 || !gr_alpha_canvas() ||
+        (surface->format != GGL_PIXEL_FORMAT_RGBA_8888 &&
+         surface->format != GGL_PIXEL_FORMAT_BGRA_8888) ||
+        w <= 0 || h <= 0 || sx < 0 || sy < 0 || surface->stride <= 0 ||
+        surface->width == 0 || surface->height == 0 ||
+        surface->width > GGL_MAX_TEXTURE_SIZE || surface->height > GGL_MAX_TEXTURE_SIZE ||
+        uint64_t(surface->stride) < surface->width ||
+        uint64_t(sx) + uint64_t(w) > surface->width ||
+        uint64_t(sy) + uint64_t(h) > surface->height)
+        return false;
+
+    // Bound both the scan and address arithmetic. No pointer-keyed opacity cache:
+    // GUI surfaces may be mutated, freed, or reused between consecutive draws.
+    const uint64_t source_bytes = uint64_t(surface->stride) * surface->height * 4;
+    if (uint64_t(w) * h > 8 * 1024 * 1024 || source_bytes > 64 * 1024 * 1024 ||
+        gr_draw->width <= 0 || gr_draw->height <= 0 || gr_draw->row_bytes <= 0 ||
+        uint64_t(gr_draw->row_bytes) < uint64_t(gr_draw->width) * 4)
+        return false;
+    const uint64_t target_bytes = uint64_t(gr_draw->row_bytes) * gr_draw->height;
+    const uintptr_t source_start = reinterpret_cast<uintptr_t>(surface->data);
+    const uintptr_t target_start = reinterpret_cast<uintptr_t>(gr_draw->data);
+    if (source_bytes > UINTPTR_MAX - source_start || target_bytes > UINTPTR_MAX - target_start)
+        return false;
+    // Disabling blend can select GGL's memcpy shortcut, which must not overlap.
+    if (source_start < target_start + target_bytes && target_start < source_start + source_bytes)
+        return false;
+    return true;
+}
+
+static BlitAlpha gr_row_alpha(const GGLubyte* pixels, int w) {
+    const unsigned alpha = pixels[3];
+    if (alpha != 0 && alpha != 255)
+        return BlitAlpha::Mixed;
+    for (int col = 1; col < w; ++col)
+        if (pixels[size_t(col) * 4 + 3] != alpha)
+            return BlitAlpha::Mixed;
+    return alpha == 0 ? BlitAlpha::Transparent : BlitAlpha::Opaque;
+}
 
 int gr_textEx_scaleW(int x, int y, const char *s, void* pFont, int max_width, int placement, int scale)
 {
@@ -221,6 +271,8 @@ void gr_color(unsigned char r, unsigned char g, unsigned char b, unsigned char a
     gl->color4xv(gl, color);
 
     gr_is_curr_clr_opaque = (a == 255);
+    // GGL converts fixed alpha 1 to iterated 255, then to 8-bit alpha zero.
+    gr_is_curr_clr_transparent = (a == 0);
 }
 
 void gr_clear()
@@ -249,6 +301,9 @@ void gr_clear()
 
 void gr_fill(int x, int y, int w, int h)
 {
+    // Preserve formats with unused/padding bits and all nonzero-alpha blending.
+    if (gr_is_curr_clr_transparent && gr_alpha_canvas())
+        return;
     GGLContext *gl = gr_context;
     int x0_disp, y0_disp, x1_disp, y1_disp;
     int l_disp, r_disp, t_disp, b_disp;
@@ -272,14 +327,16 @@ void gr_fill(int x, int y, int w, int h)
 
 void gr_blit(gr_surface source, int sx, int sy, int w, int h, int dx, int dy)
 {
-    if (gr_context == NULL) {
+    if (gr_context == NULL || source == NULL || gr_draw == NULL) {
         return;
     }
 
     GGLContext *gl = gr_context;
     GGLSurface *surface = (GGLSurface*)source;
 
-    if(surface->format == GGL_PIXEL_FORMAT_RGBX_8888)
+    const bool banded = gr_blit_alpha_safe(surface, sx, sy, w, h);
+    const bool opaque = surface->format == GGL_PIXEL_FORMAT_RGBX_8888;
+    if (opaque)
         gl->disable(gl, GGL_BLEND);
 
     int dx0_disp, dy0_disp, dx1_disp, dy1_disp;
@@ -320,13 +377,54 @@ void gr_blit(gr_surface source, int sx, int sy, int w, int h, int dx, int dy)
     gl->texGeni(gl, GGL_T, GGL_TEXTURE_GEN_MODE, GGL_ONE_TO_ONE);
     gl->enable(gl, GGL_TEXTURE_2D);
     gl->texCoord2i(gl, sx - l_disp, sy - t_disp);
-    gl->recti(gl, l_disp, t_disp, r_disp, b_disp);
+    // Coordinates stay anchored to the FULL rectangle. Each band samples its
+    // original source rows, including when the global scissor clips its top.
+    if (banded) {
+        const size_t stride = static_cast<size_t>(surface->stride) * 4;
+        int band_start = 0;
+        BlitAlpha band = BlitAlpha::Mixed;
+        bool blending = true;
+        unsigned draws = 0;
+        for (int row = 0; row <= h; ++row) {
+            const BlitAlpha next = row < h ? gr_row_alpha(surface->data +
+                (size_t(sy) + row) * stride + size_t(sx) * 4, w) : BlitAlpha::Mixed;
+            if (row == 0) {
+                band = next;
+                continue;
+            }
+            if (row < h && next == band)
+                continue;
+            if (band != BlitAlpha::Transparent) {
+                const bool blend_band = band == BlitAlpha::Mixed;
+                if (blend_band != blending) {
+                    if (blend_band) gl->enable(gl, GGL_BLEND);
+                    else gl->disable(gl, GGL_BLEND);
+                    blending = blend_band;
+                }
+                gl->recti(gl, l_disp, t_disp + band_start, r_disp, t_disp + row);
+                // Bound state changes on pathological stripe textures. Only the
+                // unpainted tail falls back, so no pixel is composited twice.
+                if (++draws == 64 && row < h) {
+                    if (!blending) gl->enable(gl, GGL_BLEND);
+                    blending = true;
+                    gl->recti(gl, l_disp, t_disp + row, r_disp, b_disp);
+                    break;
+                }
+            }
+            band_start = row;
+            band = next;
+        }
+        if (!blending)
+            gl->enable(gl, GGL_BLEND);
+    } else {
+        gl->recti(gl, l_disp, t_disp, r_disp, b_disp);
+    }
     gl->disable(gl, GGL_TEXTURE_2D);
 
     if (gr_rotation != 0)
         free(surface_rotated.data);
 
-    if(surface->format == GGL_PIXEL_FORMAT_RGBX_8888)
+    if (opaque)
         gl->enable(gl, GGL_BLEND);
 }
 

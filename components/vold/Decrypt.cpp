@@ -22,10 +22,12 @@
 #include <string>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #include <keyutils.h>
 #include "cutils/properties.h"
@@ -287,30 +289,49 @@ struct password_data_struct {
 	void* password_handle;
 };
 
-bool Get_Spblob_Data(const std::string& spblob_path, const std::string& handle_str, const std::string& suffix, const std::string& tag, std::string *data) {
-	bool found_file = false;
-	std::string file = spblob_path + handle_str + suffix;
-	if (android::vold::pathExists(file)) {
-		if (!android::base::ReadFileToString(file, data)) {
-			printf("Failed to read '%s'\n", file.c_str());
-		} else
-			found_file = true;
-	} else {
-		printf("trying to read %s_file data with leading 0\n", tag.c_str());
-		std::vector<std::string> file_paths = {
-			spblob_path + "0" + handle_str + suffix,
-			spblob_path + "00" + handle_str + suffix
-		};
-		for (auto& file : file_paths) {
-			if (!android::base::ReadFileToString(file, data)) {
-				printf("Failed to read '%s'\n", file.c_str());
-			} else {
-				found_file = true;
-				break;
-			}
+enum class SpblobPathResult { FOUND, MISSING, ERROR };
+
+static SpblobPathResult Get_Spblob_Path(const std::string& spblob_path,
+		const std::string& handle_str, const std::string& suffix, std::string* file) {
+	if (file == nullptr)
+		return SpblobPathResult::ERROR;
+	file->clear();
+	if (spblob_path.empty() || handle_str.empty() || handle_str.size() > 16 ||
+			handle_str.find_first_not_of("0123456789abcdef") != std::string::npos)
+		return SpblobPathResult::ERROR;
+	std::string directory = spblob_path;
+	if (directory.back() != '/')
+		directory += '/';
+	// AOSP 14/15/16 LockSettingsStorage.getSyntheticPasswordStateFileForUser uses
+	// "%016x.%s". KeystoreInfo supplies unpadded lowercase hex; retain an exact
+	// existing name, then use only the canonical width, not guessed zero prefixes.
+	const std::string canonical = std::string(16 - handle_str.size(), '0') + handle_str;
+	for (const auto& handle : {handle_str, canonical}) {
+		const std::string candidate = directory + handle + suffix;
+		struct stat st;
+		if (lstat(candidate.c_str(), &st) == 0) {
+			*file = candidate;
+			return SpblobPathResult::FOUND;
 		}
+		if (errno != ENOENT)
+			return SpblobPathResult::ERROR;
+		if (handle == canonical)
+			break;
 	}
-	return found_file;
+	return SpblobPathResult::MISSING;
+}
+
+bool Get_Spblob_Data(const std::string& spblob_path, const std::string& handle_str, const std::string& suffix, const std::string& tag, std::string *data) {
+	if (data == nullptr)
+		return false;
+	data->clear();
+	std::string file;
+	if (Get_Spblob_Path(spblob_path, handle_str, suffix, &file) != SpblobPathResult::FOUND ||
+			!android::base::ReadFileToString(file, data)) {
+		printf("Failed to read %s data for handle '%s'\n", tag.c_str(), handle_str.c_str());
+		return false;
+	}
+	return true;
 }
 
 /* C++ replacement for
@@ -395,49 +416,41 @@ struct weaver_data_struct {
 	int slot;
 };
 
-/* C++ replacement for
- * https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/SyntheticPasswordManager.java#501
- * called here
- * https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/SyntheticPasswordManager.java#768 */
+// AOSP android-{14,15,16}.0.0_r1 SyntheticPasswordManager.saveWeaverSlot:
+// ByteBuffer.allocate(5), put(version=1), putInt(slot); default order is BIG_ENDIAN.
+static bool Parse_Weaver_Data(const uint8_t* data, size_t size, weaver_data_struct* wd) {
+	if (data == nullptr || wd == nullptr || size != 5 || data[0] != 1)
+		return false;
+	const uint32_t slot = (uint32_t(data[1]) << 24) | (uint32_t(data[2]) << 16) |
+			(uint32_t(data[3]) << 8) | uint32_t(data[4]);
+	if (slot > INT32_MAX)
+		return false;
+	wd->version = data[0];
+	wd->slot = static_cast<int32_t>(slot);
+	return true;
+}
+
 bool Get_Weaver_Data(const std::string& spblob_path, const std::string& handle_str, weaver_data_struct *wd) {
 	printf("Get_Weaver_Data\n");
-	bool found_file = false;
-	std::string weaver_data;
-	std::string file = spblob_path + handle_str + ".weaver";
-	if (android::vold::pathExists(file)) {
-		if (!android::base::ReadFileToString(file, &weaver_data)) {
-			printf("Failed to read '%s'\n", file.c_str());
-		} else
-			found_file = true;
-	} else {
-		printf("trying to read %s_file data with leading 0\n", file.c_str());
-		std::vector<std::string> file_paths = {
-			spblob_path + "0" + handle_str + ".weaver",
-			spblob_path + "00" + handle_str + ".weaver"
-		};
-		for (auto& file : file_paths) {
-			if (!android::base::ReadFileToString(file, &weaver_data)) {
-				printf("Failed to read '%s'\n", file.c_str());
-			} else {
-				found_file = true;
-				break;
-			}
-		}
+	std::string file;
+	if (wd == nullptr || Get_Spblob_Path(spblob_path, handle_str, ".weaver", &file) !=
+			SpblobPathResult::FOUND)
+		return false;
+	android::base::unique_fd fd(TEMP_FAILURE_RETRY(open(file.c_str(),
+			O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)));
+	struct stat st;
+	if (fd.get() < 0 || fstat(fd.get(), &st) != 0 || !S_ISREG(st.st_mode) || st.st_size != 5) {
+		printf("Get_Weaver_Data: unreadable or invalid record size\n");
+		return false;
 	}
-	if (found_file == false) {
-		printf("Get_Weaver_Data: No weaver file found for %s\n", handle_str.c_str());
-		return found_file;
-	} else {
-		// output_hex(weaver_data.data(), weaver_data.size());printf("\n");
-		const unsigned char* byteptr = (const unsigned char*)weaver_data.data();
-		wd->version = *byteptr;
-		// printf("weaver version %i\n", wd->version);
-		const int* intptr = (const int*)weaver_data.data() + sizeof(unsigned char);
-		wd->slot = *intptr;
-		//endianswap(&wd->slot); not needed
-		// printf("weaver slot %i\n", wd->slot);
+	// Read at most six bytes: the extra byte detects growth, without an unbounded allocation.
+	uint8_t record[6];
+	const ssize_t size = TEMP_FAILURE_RETRY(read(fd.get(), record, sizeof(record)));
+	if (size < 0 || !Parse_Weaver_Data(record, static_cast<size_t>(size), wd)) {
+		printf("Get_Weaver_Data: invalid version, slot, or record length\n");
+		return false;
 	}
-	return found_file;
+	return true;
 }
 
 namespace android {
@@ -670,19 +683,9 @@ userid_t fakeUid(const userid_t uid) {
 
 bool Is_Weaver(const std::string& spblob_path, const std::string& handle_str) {
 	printf("Is_Weaver\n");
-	struct stat st;
-	std::vector<std::string> weaver_file_paths = {
-		spblob_path + handle_str + ".weaver",
-		spblob_path + "0" + handle_str + ".weaver",
-		spblob_path + "00" + handle_str + ".weaver"
-	};
-    for (auto& weaver_file : weaver_file_paths) {
-		if (stat(weaver_file.c_str(), &st) == 0) {
-			return true;
-			break;
-		}
-	}
-	return false;
+	std::string file;
+	// Uncertain presence must not downgrade a Weaver protector to the Gatekeeper path.
+	return Get_Spblob_Path(spblob_path, handle_str, ".weaver", &file) != SpblobPathResult::MISSING;
 }
 
 bool Free_Return(bool retval, void* weaver_key, password_data_struct* pwd) {
@@ -791,9 +794,21 @@ bool Decrypt_User_Synth_Pass(const userid_t user_id, const std::string& Password
 		// printf("weaver key: "); output_hex((unsigned char*)weaver_key, weaver_key_size); printf("\n");
 		// Send the slot from the .weaver file, the computed weaver key, and get the escrowed key data
 		std::vector<uint8_t> weaver_payload;
-		// TODO: we should return more information about the status including time delays before the next retry
-		if (!weaver.WeaverVerify(wd.slot, weaver_key, &weaver_payload)) {
-			printf("failed to weaver verify\n");
+		const auto result = weaver.WeaverVerify(wd.slot, weaver_key, SHA512_DIGEST_LENGTH, &weaver_payload);
+		using VerifyStatus = android::vold::Weaver::VerifyStatus;
+		if (result.status != VerifyStatus::OK) {
+			switch (result.status) {
+				case VerifyStatus::INCORRECT_KEY: printf("Weaver: incorrect credential\n"); break;
+				case VerifyStatus::THROTTLE: printf("Weaver: throttled\n"); break;
+				case VerifyStatus::TRANSPORT_ERROR: printf("Weaver: transport error\n"); break;
+				case VerifyStatus::UNAVAILABLE: printf("Weaver: device unavailable\n"); break;
+				case VerifyStatus::INVALID_RESPONSE: printf("Weaver: invalid response\n"); break;
+				default: printf("Weaver: verification failed\n"); break;
+			}
+			if (result.timeout_ms != 0)
+				printf("Weaver: retry blocked for %u ms; no automatic retry\n", result.timeout_ms);
+			else if (result.status == VerifyStatus::THROTTLE)
+				printf("Weaver: no usable retry delay; reads blocked for this process\n");
 			return Free_Return(retval, weaver_key, &pwd);
 		}
 		// printf("weaver payload: "); output_hex(&weaver_payload); printf("\n");

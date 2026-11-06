@@ -8,6 +8,7 @@ MediaTek MT6897/MT8792, NT36532 touchscreen. Maintainer: **XenoOP**.
 - Device build configuration, firmware dependencies and recovery init files.
 - `components/recovery`: directly compiled recovery changes and built-in UI resources.
 - `components/vold`: the decryption implementation used by this build.
+- `components/foxextras`: startup integration that preserves the verified crypto profile.
 - Build and image-validation tools only; no patch archive or workflow.
 
 ## Features and Fixes
@@ -20,6 +21,9 @@ MediaTek MT6897/MT8792, NT36532 touchscreen. Maintainer: **XenoOP**.
 - Metadata and user-0 decryption verified with the tested Android 17 One UI port.
 - Driver-preserving vendor_boot repacking, validated ramdisk framing and corrected HAL manifests.
 - Audited Mount/backup targets, consistent partition labels and guarded crypto-mapper release before Format Data.
+- Active-ROM crypto profile detection, normal Metadata recovery before inspection, and a no-upgrade key verification gate.
+- Automatic Android timezone selection, power-key wake fixes, and reduced transparent/rounded-texture rendering work.
+- Right-aligned Files sorting without a redundant overflow menu.
 
 ## Build
 
@@ -44,7 +48,10 @@ The build preserves the supplied platform drivers, DTB, boot arguments and board
 the complete selected ramdisk stream, manifests, AVB integrity, crypto profile and baked resources.
 Use the final image from `RECOVERY_OUTPUT`, not intermediate images or ZIPs from Android build hooks.
 
-The tested profile is release 17, OS patch 2026-08-05, vendor/boot patch 2026-05-05. Other ROMs and
-credential-protected CE require separate verification. Data backup excludes internal storage and
+The current tested ROM uses release 17, OS patch 2026-08-05 and vendor/boot patch 2026-05-05.
+The detector accepts numeric Android 14-17 profiles but requires compatible vendor crypto
+components and safe storage state. Other ROMs and credential-protected CE require separate
+hardware verification; this is not an unconditional all-ROM compatibility claim.
+Data backup excludes internal storage and
 boot-image backups select the active slot. Destructive wipe/restore/format/re-encryption and USB OTG
 media have not been exercised on user data. License notices remain with the source components.

@@ -16,3 +16,14 @@ RECOVERY_RESEARCH.md
 RECOVERY_FIXES_*.md
 DEVICE_COMMITS_*.md
 RECOVERY_COMMITS_*.md
+/docs/
+kmprobe_run_latest.txt
+tools/test_*.py
+tools/kmprobe/
+tools/build_kmprobe.sh
+tools/stage_ks2.sh
+tools/lk_xref.py
+tools/patch_*.py
+tools/scan_bootimg.py
+tools/adapt_vendor_boot_recovery.py
+tools/audit_recovery_size.py

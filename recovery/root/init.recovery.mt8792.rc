@@ -13,7 +13,8 @@ on init
 
     # Decryption blobs live in the ramdisk under /vendor.
     export LD_LIBRARY_PATH /system/lib64:/vendor/lib64:/vendor/lib64/hw
-    setprop crypto.ready 1
+    setprop crypto.ready 0
+    setprop vendor.recovery.crypto.profile detecting
 
 on fs
     install_keyring

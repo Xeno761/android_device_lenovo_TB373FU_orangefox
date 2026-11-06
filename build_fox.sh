@@ -6,7 +6,7 @@ ROOT=${FOX_SOURCE_ROOT:-/root/fox_14.1}
 TREE=$WORKSPACE
 export FOX_SOURCE_ROOT="$ROOT"
 test -d "$WORKSPACE"
-export RECOVERY_OUTPUT="${RECOVERY_OUTPUT:-$WORKSPACE/OrangeFox-TB373FU-FinalBase-Dark120.img}"
+export RECOVERY_OUTPUT="${RECOVERY_OUTPUT:-$WORKSPACE/OrangeFox-TB373FU-Adaptive.img}"
 test ! -e "$RECOVERY_OUTPUT" || { echo "Refusing to overwrite existing image: $RECOVERY_OUTPUT" >&2; exit 1; }
 
 echo "=========================================="
@@ -43,19 +43,18 @@ export OF_NO_TREBLE_COMPATIBILITY_CHECK=1
 export OF_NO_RELOAD_AFTER_DEC=1
 export OF_SKIP_MULTIUSER_FOLDERS_BACKUP=1
 export OF_RUN_POST_FORMAT_PROCESS=1
-# Match the existing ROM's actual KeyMint bindings before the first TEE startup.
-# Raising the vendor patch above the ROM could upgrade keys Android cannot use.
-export RECOVERY_PLATFORM_VERSION="${RECOVERY_PLATFORM_VERSION:-17}"
-export RECOVERY_PLATFORM_SECURITY_PATCH="${RECOVERY_PLATFORM_SECURITY_PATCH:-2026-08-05}"
-export RECOVERY_VENDOR_SECURITY_PATCH="${RECOVERY_VENDOR_SECURITY_PATCH:-2026-05-05}"
+# Firmware build metadata is not a substitute for the installed ROM's crypto
+# profile. Runtime discovery supplies OS/vendor bindings before KeyMint starts.
 export BOOT_SECURITY_PATCH=2026-05-05
-export VENDOR_SECURITY_PATCH="$RECOVERY_VENDOR_SECURITY_PATCH"
+export VENDOR_SECURITY_PATCH=2026-05-05
 
 test -d "$ROOT/bootable/recovery"
 test -d "$ROOT/system/vold"
+test -d "$ROOT/vendor/recovery/FoxExtras"
 # Apply direct source components; no patch files or Git history are required.
 tar -C "$WORKSPACE/components/recovery" -cf - . | tar -C "$ROOT/bootable/recovery" -xf -
 tar -C "$WORKSPACE/components/vold" -cf - . | tar -C "$ROOT/system/vold" -xf -
+tar -C "$WORKSPACE/components/foxextras" -cf - . | tar -C "$ROOT/vendor/recovery/FoxExtras" -xf -
 python3 -B "$WORKSPACE/tools/make_landscape_theme.py" "$ROOT"
 cd "$ROOT"
 
@@ -74,16 +73,16 @@ lunch fox_TB373FU-ap2a-eng
 rm -rf out/target/product/TB373FU/recovery/root/twres
 
 echo "[3/4] Compiling adbd and vendorbootimage..."
-m adbd vendorbootimage -j4
+m adbd tb373fu_crypto_profile vendorbootimage -j4
 
 echo "[4/4] Packing and validating the built-in horizontal recovery..."
 bash "$WORKSPACE/quick_repack.sh"
 python3 -B "$WORKSPACE/tools/validate_recovery_image.py" "$RECOVERY_OUTPUT" \
-    --expect-release "$RECOVERY_PLATFORM_VERSION" \
-    --expect-vendor-patch "$RECOVERY_VENDOR_SECURITY_PATCH" \
+    --expect-adaptive-crypto \
     --expect-theme-width 2944 --expect-mtp \
     --expect-built-in-ui "$ROOT/bootable/recovery/gui/theme/landscape_hdpi" \
-    --expect-minui "$ROOT/out/target/product/TB373FU/system/lib64/libminuitwrp.so"
+    --expect-minui "$ROOT/out/target/product/TB373FU/system/lib64/libminuitwrp.so" \
+    --expect-crypto-detector "$ROOT/out/target/product/TB373FU/system/bin/tb373fu_crypto_profile"
 
 echo "=========================================="
 echo "ORANGEFOX BUILD COMPLETE!"

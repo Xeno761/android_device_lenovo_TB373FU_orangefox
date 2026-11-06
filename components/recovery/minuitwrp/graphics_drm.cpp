@@ -49,6 +49,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <android-base/properties.h>
@@ -232,6 +233,52 @@ static drmModeConnector *main_monitor_connector;
 static int drm_fd = -1;
 
 static bool current_blank_state = true;
+static bool drm_active = false;
+static bool drm_profile_enabled = false;
+static int last_flip_status = 0;
+static unsigned consecutive_flip_failures = 0;
+static int64_t wake_started_ns = 0;
+
+static int64_t drm_now_ns() {
+  timespec now{};
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  return static_cast<int64_t>(now.tv_sec) * 1000000000LL + now.tv_nsec;
+}
+
+// Optional queries: keep the public, void-returning backend blank/flip ABI intact.
+extern "C" __attribute__((visibility("default"))) int gr_drm_blank_state() {
+  return drm_active ? static_cast<int>(current_blank_state) : -1;
+}
+
+extern "C" __attribute__((visibility("default"))) int gr_drm_last_flip_status() {
+  return drm_active ? last_flip_status : -2; // success=1, skipped=0, failed=-1
+}
+
+static void drm_profile_frame(int status, int64_t copy_ns, int64_t commit_ns, size_t bytes) {
+  if (!drm_profile_enabled)
+    return;
+  static unsigned frames = 0, submitted = 0, failed = 0, skipped = 0;
+  static int64_t copy_total = 0, commit_total = 0, copy_max = 0, commit_max = 0;
+  static uint64_t copied_bytes = 0;
+  ++frames;
+  submitted += status > 0;
+  failed += status < 0;
+  skipped += status == 0;
+  copy_total += copy_ns;
+  commit_total += commit_ns;
+  copy_max = std::max(copy_max, copy_ns);
+  commit_max = std::max(commit_max, commit_ns);
+  copied_bytes += bytes;
+  if (frames == 30) {
+    printf("DRM frames=30 submitted=%u failed=%u blank_skips=%u bytes=%llu copy=%.2fms commit=%.2fms copy_max=%.2fms commit_max=%.2fms\n",
+           submitted, failed, skipped, static_cast<unsigned long long>(copied_bytes),
+           copy_total / 30000000.0, commit_total / 30000000.0,
+           copy_max / 1000000.0, commit_max / 1000000.0);
+    frames = submitted = failed = skipped = 0;
+    copy_total = commit_total = copy_max = commit_max = 0;
+    copied_bytes = 0;
+  }
+}
 static int fb_prop_id;
 static struct Crtc crtc_res;
 static struct Connector conn_res;
@@ -614,10 +661,12 @@ static void drm_blank(minui_backend* backend __unused, bool blank) {
   if (blank == current_blank_state)
     return;
 
+  const int64_t start = drm_now_ns();
+  printf("DRM blank=%d begin mono_ms=%lld\n", blank, static_cast<long long>(start / 1000000));
   drmModeAtomicReqPtr atomic_req = drmModeAtomicAlloc();
   if (!atomic_req) {
-     printf("Atomic Alloc failed\n");
-     return;
+     printf("DRM blank=%d failed: Atomic Alloc failed\n", blank);
+      return;
   }
 
   if (blank)
@@ -625,15 +674,28 @@ static void drm_blank(minui_backend* backend __unused, bool blank) {
   else
     ret = drm_enable_crtc(atomic_req);
 
+  const int64_t copy_start = drm_now_ns();
+  if (!ret && !blank) {
+    // current_buffer is the next writable surface, not the last displayed one.
+    memcpy(drm_surfaces[current_buffer]->base.data, draw_buf->data,
+           static_cast<size_t>(draw_buf->height) * draw_buf->row_bytes);
+  }
+  const int64_t commit_start = drm_now_ns();
   if (!ret)
     ret = drmModeAtomicCommit(drm_fd, atomic_req, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
+  const int saved_errno = ret ? errno : 0;
+  const int64_t end = drm_now_ns();
 
   if (!ret) {
-    printf("Atomic Commit succeed");
     current_blank_state = blank;
-  } else {
-    printf("Atomic Commit failed, rc = %d\n", ret);
+    consecutive_flip_failures = 0;
+    if (!blank)
+      current_buffer = 1 - current_buffer;
+    wake_started_ns = blank ? 0 : start;
   }
+  printf("DRM blank=%d end rc=%d errno=%d state=%d total=%.2fms copy=%.2fms commit=%.2fms\n",
+         blank, ret, saved_errno, current_blank_state, (end - start) / 1000000.0,
+         (commit_start - copy_start) / 1000000.0, (end - commit_start) / 1000000.0);
 
   drmModeAtomicFree(atomic_req);
 
@@ -934,14 +996,13 @@ static void disable_non_main_crtcs(int fd,
   drmModeAtomicFree(atomic_req);
 }
 
-static void update_plane_fb() {
+static int update_plane_fb() {
   uint32_t i, prop_id;
 
   /* Set atomic req */
   drmModeAtomicReqPtr atomic_req = drmModeAtomicAlloc();
   if (!atomic_req) {
-     printf("Atomic Alloc failed. Could not update fb_id\n");
-     return;
+     return -ENOMEM;
   }
 
   /* Add conn-crtc association property required
@@ -951,9 +1012,13 @@ static void update_plane_fb() {
            "CRTC_ID", main_monitor_crtc->crtc_id);
 
   /* Add property */
-  for(i = 0; i < number_of_lms; i++)
-    drmModeAtomicAddProperty(atomic_req, plane_res[i].plane->plane_id,
-                             fb_prop_id, drm_surfaces[current_buffer]->fb_id);
+  for(i = 0; i < number_of_lms; i++) {
+    if (drmModeAtomicAddProperty(atomic_req, plane_res[i].plane->plane_id,
+                              fb_prop_id, drm_surfaces[current_buffer]->fb_id) < 0) {
+      drmModeAtomicFree(atomic_req);
+      return -EINVAL;
+    }
+  }
 
   /* Commit changes */
   int32_t ret;
@@ -962,14 +1027,13 @@ static void update_plane_fb() {
 
   drmModeAtomicFree(atomic_req);
 
-  if (ret)
-    printf("Atomic commit failed ret=%d\n", ret);
-
+  return ret;
 }
 
 static GRSurface* drm_init(minui_backend* backend __unused) {
   drmModeRes* res = nullptr;
 
+  drm_profile_enabled = android::base::GetBoolProperty("debug.twrp.profile", false);
   spr_enabled = android::base::GetIntProperty("vendor.display.enable_spr", 0);
   /* Consider DRM devices in order. */
   for (int i = 0; i < DRM_MAX_MINOR; i++) {
@@ -1179,6 +1243,18 @@ static GRSurface* drm_init(minui_backend* backend __unused) {
   fb_prop_id = prop_id;
 
   drm_blank(nullptr, false);
+  if (current_blank_state) {
+    printf("DRM initial modeset failed; refusing an unusable backend\n");
+    free(draw_buf->data);
+    free(draw_buf);
+    draw_buf = nullptr;
+    drm_destroy_surface(drm_surfaces[0]);
+    drm_destroy_surface(drm_surfaces[1]);
+    drmModeDestroyPropertyBlob(drm_fd, crtc_res.mode_blob_id);
+    close(drm_fd);
+    drm_fd = -1;
+    return nullptr;
+  }
 
   // The first sequence query after modeset can return an old/zero timestamp.
   // Warm up and reject discontinuities rather than reporting boot-age deltas.
@@ -1203,22 +1279,51 @@ static GRSurface* drm_init(minui_backend* backend __unused) {
     drmModeFreeCrtc(readback);
   }
 
+  drm_active = true;
   return draw_buf;
 }
 
 static GRSurface* drm_flip(minui_backend* backend __unused) {
+    last_flip_status = 0;
+    if (current_blank_state) {
+      drm_profile_frame(0, 0, 0, 0);
+      return draw_buf;
+    }
+    const int64_t start = drm_profile_enabled ? drm_now_ns() : 0;
+    const size_t bytes = static_cast<size_t>(draw_buf->height) * draw_buf->row_bytes;
     memcpy(drm_surfaces[current_buffer]->base.data,
-            draw_buf->data, draw_buf->height * draw_buf->row_bytes);
-    update_plane_fb();
-    current_buffer = 1 - current_buffer;
+            draw_buf->data, bytes);
+    const int64_t copied = drm_profile_enabled ? drm_now_ns() : 0;
+    const int ret = update_plane_fb();
+    const int64_t end = drm_profile_enabled ? drm_now_ns() : 0;
+    if (!ret) {
+      last_flip_status = 1;
+      current_buffer = 1 - current_buffer;
+      consecutive_flip_failures = 0;
+      if (wake_started_ns) {
+        printf("DRM first frame after unblank=%.2fms\n", (drm_now_ns() - wake_started_ns) / 1000000.0);
+        wake_started_ns = 0;
+      }
+    } else {
+      last_flip_status = -1;
+      if (consecutive_flip_failures < 3)
+        printf("DRM flip failed rc=%d; retaining next buffer %d\n", ret, current_buffer);
+      if (consecutive_flip_failures < 3)
+        ++consecutive_flip_failures;
+    }
+    drm_profile_frame(last_flip_status, copied - start, end - copied, bytes);
     return draw_buf;
 }
 
 static void drm_exit(minui_backend* backend __unused) {
-    drm_blank(nullptr, true);
+  drm_blank(nullptr, true);
+  drm_active = false;
     drmModeDestroyPropertyBlob(drm_fd, crtc_res.mode_blob_id);
     drm_destroy_surface(drm_surfaces[0]);
-    drm_destroy_surface(drm_surfaces[1]);
+  drm_destroy_surface(drm_surfaces[1]);
+  free(draw_buf->data);
+  free(draw_buf);
+  draw_buf = nullptr;
     close(drm_fd);
     drm_fd = -1;
 }

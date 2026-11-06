@@ -80,24 +80,16 @@
 				<action function="page">file_quick_actions</action>
 			</button>
 			<button style="actionbar">
-				<placement x="2680" y="%ab_search_y%" placement="4" />
+				<placement x="%ab_btn1_x%" y="%ab_search_y%" placement="4" />
 				<action function="overlay">fm_sort</action>
 			</button>
 			<image>
-				<placement x="2680" y="%ab_search_y%" placement="4" />
+				<placement x="%ab_btn1_x%" y="%ab_search_y%" placement="4" />
 				<image resource="actionbar_sort" />
 			</image>
 			<image>
 				<placement x="132" y="%ab_search_y%" placement="4" />
 				<image resource="actionbar_search" />
-			</image>
-			<button style="actionbar">
-				<placement x="2818" y="%ab_search_y%" placement="4" />
-				<action function="page">menu</action>
-			</button>
-			<image>
-				<placement x="2818" y="%ab_search_y%" placement="4" />
-				<image resource="actionbar_menu" />
 			</image>
 			<image>
 				<condition var1="of_empty_dir" op="&gt;=" var2="1" />
